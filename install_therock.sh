@@ -184,7 +184,7 @@ if [ -f "$ROCMINFO" ]; then
     echo "  ✔ Found: $ROCMINFO"
     echo ""
     echo "--- rocminfo (first 50 lines) ---"
-    "$ROCMINFO" 2>&1 | head -50
+    "$ROCMINFO" 2>&1 | head -50 || true
     echo ""
 else
     echo "  ✘ rocminfo NOT found at $ROCMINFO"
@@ -197,7 +197,7 @@ if [ -f "$HIP_TEST" ]; then
     echo "  ✔ Found: $HIP_TEST"
     echo ""
     echo "--- test_hip_api ---"
-    "$HIP_TEST" 2>&1 | head -50
+    "$HIP_TEST" 2>&1 | head -50 || true
     echo ""
 else
     echo "  ✘ test_hip_api NOT found at $HIP_TEST"
@@ -207,7 +207,7 @@ else
         echo "    Found at: $FOUND"
         echo ""
         echo "--- test_hip_api ---"
-        "$FOUND" 2>&1 | head -50
+        "$FOUND" 2>&1 | head -50 || true
     else
         ERRORS=$((ERRORS + 1))
     fi
