@@ -1,20 +1,27 @@
 #!/usr/bin/env bash
 # =============================================================================
 # install_therock.sh
-# Auto-detects GPU architecture, downloads the matching latest TheRock nightly
-# tarball into $SCRATCH_ROOT/therock-tarball/, extracts it, and verifies.
+# Detects GPU architecture, downloads the matching latest TheRock nightly
+# tarball, and extracts it.  Stops before verification.
+#
+# Usage:
+#   bash install_therock.sh
+#   GFX_TARGET=gfx90a bash install_therock.sh   # skip auto-detection
+#
+# On success writes install state to $SCRATCH_ROOT/.therock_last_install
+# so that verify_therock.sh can pick it up automatically.
 # =============================================================================
 
 set -euo pipefail
 
 SCRATCH_ROOT="${SCRATCH_ROOT:-/scratch/users/lbonta}"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-# THEROCK_DIR will be set after GPU detection: therock-tarball-$GFX_TARGET-$TIMESTAMP
 BASE_URL="https://therock-nightly-tarball.s3.amazonaws.com"
+STATE_FILE="$SCRATCH_ROOT/.therock_last_install"
 
 echo ""
 echo "============================================================"
-echo "  TheRock Nightly Tarball — Auto Install"
+echo "  TheRock Nightly Tarball — Install"
 echo "  $(date)"
 echo "  Host: $(hostname)"
 echo "============================================================"
@@ -23,57 +30,90 @@ echo ""
 # -----------------------------------------------------------------------------
 # STEP 1 — Detect GPU architecture
 # -----------------------------------------------------------------------------
-echo "[1/5] Detecting GPU architecture from lspci..."
+if [ -n "${GFX_TARGET:-}" ]; then
+    echo "[1/4] GFX_TARGET already set — skipping detection."
+    echo "  Using: $GFX_TARGET"
+else
+    echo "[1/4] Detecting GPU architecture..."
 
-PCI_INFO=$(lspci 2>/dev/null \
-    | grep -i -E "VGA|3D|Display|Radeon|NVIDIA|Instinct" \
-    | grep -v "Host bridge" \
-    | grep -v "ASPEED" || true)
+    # Primary: rocm-smi gives the GFX version directly and works even when the
+    # GPU doesn't appear under a VGA/Display PCI class (datacenter cards).
+    detect_gfx_rocmsmi() {
+        command -v rocm-smi &>/dev/null || return 1
+        local gfx
+        gfx=$(rocm-smi --showproductname 2>/dev/null \
+              | grep -i "GFX Version" | head -1 | awk '{print $NF}')
+        [ -z "$gfx" ] && return 1
+        case "$gfx" in
+            gfx94*)  echo "gfx94X-dcgpu" ;;
+            gfx90a)  echo "gfx90a"       ;;
+            gfx908)  echo "gfx908"       ;;
+            gfx906)  echo "gfx906"       ;;
+            gfx900)  echo "gfx900"       ;;
+            gfx110*) echo "gfx110X-all"  ;;
+            gfx103*) echo "gfx103X-all"  ;;
+            gfx803)  echo "gfx803"       ;;
+            *)       echo "UNKNOWN"      ;;
+        esac
+    }
 
-echo "  PCI GPU devices found:"
-echo "$PCI_INFO" | sed 's/^/      /'
-echo ""
+    # Fallback: lspci product-name / device-ID matching.
+    # Scans for "AMD" broadly to catch cards under non-VGA PCI classes.
+    PCI_INFO=$(lspci 2>/dev/null \
+        | grep -i -E "VGA|3D|Display|Radeon|NVIDIA|Instinct|AMD|Advanced Micro" \
+        | grep -v "Host bridge" \
+        | grep -v "ASPEED" || true)
 
-detect_gfx() {
-    # Priority: dcgpu / datacenter cards first, then consumer
-    if echo "$PCI_INFO" | grep -qi "MI300X\|Device 74a0\|0x74a0"; then
-        echo "gfx94X-dcgpu"
-    elif echo "$PCI_INFO" | grep -qi "MI300A\|Device 74a1\|0x74a1"; then
-        echo "gfx94X-dcgpu"
-    elif echo "$PCI_INFO" | grep -qi "MI325\|Device 74b5\|0x74b5"; then
-        echo "gfx94X-dcgpu"
-    elif echo "$PCI_INFO" | grep -qi "MI210\|MI250\|Aldebaran\|MI200\|gfx90a\|Device 740c\|0x740c"; then
-        echo "gfx90a"
-    elif echo "$PCI_INFO" | grep -qi "MI100\|Arcturus\|gfx908\|Device 738c\|0x738c"; then
-        echo "gfx908"
-    elif echo "$PCI_INFO" | grep -qi "MI60\|MI50\|Vega20\|gfx906"; then
-        echo "gfx906"
-    elif echo "$PCI_INFO" | grep -qi "Vega10\|gfx900\|Instinct MI25\|Device 6860"; then
-        echo "gfx900"
-    elif echo "$PCI_INFO" | grep -qi "RX 79\|RX 78\|RX 77\|RX 76\|Navi3\|gfx1100\|gfx1101\|gfx1102\|gfx110"; then
-        echo "gfx110X-all"
-    elif echo "$PCI_INFO" | grep -qi "RX 69\|RX 68\|RX 67\|RX 66\|Navi2\|gfx1030\|gfx1031\|gfx1032\|gfx103"; then
-        echo "gfx103X-all"
-    elif echo "$PCI_INFO" | grep -qi "RX 580\|RX 570\|RX 560\|Polaris\|gfx803"; then
-        echo "gfx803"
+    echo "  PCI GPU devices found:"
+    echo "$PCI_INFO" | sed 's/^/      /'
+    echo ""
+
+    detect_gfx_lspci() {
+        # MI325X ships with device ID 0x74a5 (not 0x74b5).
+        if echo "$PCI_INFO" | grep -qi "MI300X\|Device 74a0\|0x74a0"; then
+            echo "gfx94X-dcgpu"
+        elif echo "$PCI_INFO" | grep -qi "MI300A\|Device 74a1\|0x74a1"; then
+            echo "gfx94X-dcgpu"
+        elif echo "$PCI_INFO" | grep -qi "MI325\|Device 74a5\|0x74a5\|Device 74b5\|0x74b5"; then
+            echo "gfx94X-dcgpu"
+        elif echo "$PCI_INFO" | grep -qi "MI210\|MI250\|Aldebaran\|MI200\|gfx90a\|Device 740c\|0x740c\|Device 740f\|0x740f"; then
+            echo "gfx90a"
+        elif echo "$PCI_INFO" | grep -qi "MI100\|Arcturus\|gfx908\|Device 738c\|0x738c"; then
+            echo "gfx908"
+        elif echo "$PCI_INFO" | grep -qi "MI60\|MI50\|Vega20\|gfx906"; then
+            echo "gfx906"
+        elif echo "$PCI_INFO" | grep -qi "Vega10\|gfx900\|Instinct MI25\|Device 6860"; then
+            echo "gfx900"
+        elif echo "$PCI_INFO" | grep -qi "RX 79\|RX 78\|RX 77\|RX 76\|Navi3\|gfx1100\|gfx1101\|gfx1102\|gfx110"; then
+            echo "gfx110X-all"
+        elif echo "$PCI_INFO" | grep -qi "RX 69\|RX 68\|RX 67\|RX 66\|Navi2\|gfx1030\|gfx1031\|gfx1032\|gfx103"; then
+            echo "gfx103X-all"
+        elif echo "$PCI_INFO" | grep -qi "RX 580\|RX 570\|RX 560\|Polaris\|gfx803"; then
+            echo "gfx803"
+        else
+            echo "UNKNOWN"
+        fi
+    }
+
+    GFX_TARGET=$(detect_gfx_rocmsmi 2>/dev/null || true)
+    if [ -z "$GFX_TARGET" ] || [ "$GFX_TARGET" = "UNKNOWN" ]; then
+        echo "  rocm-smi detection failed or unavailable; falling back to lspci..."
+        GFX_TARGET=$(detect_gfx_lspci)
     else
-        echo "UNKNOWN"
+        echo "  rocm-smi detected: $GFX_TARGET"
     fi
-}
 
-GFX_TARGET=$(detect_gfx)
-
-if [ "$GFX_TARGET" = "UNKNOWN" ]; then
-    echo "  ERROR: Could not auto-detect GPU architecture."
-    echo "  Please set GFX_TARGET manually and re-run:"
-    echo "    GFX_TARGET=gfx90a bash install_therock.sh"
-    exit 1
+    if [ "$GFX_TARGET" = "UNKNOWN" ]; then
+        echo "  ERROR: Could not auto-detect GPU architecture."
+        echo "  Please set GFX_TARGET manually and re-run:"
+        echo "    GFX_TARGET=gfx90a bash install_therock.sh"
+        exit 1
+    fi
 fi
 
-echo "  Detected GPU architecture: $GFX_TARGET"
+echo "  GPU architecture: $GFX_TARGET"
 echo ""
 
-# Set THEROCK_DIR now that we know the GPU target
 THEROCK_DIR="$SCRATCH_ROOT/therock-tarball-$GFX_TARGET-$TIMESTAMP"
 INSTALL_DIR="$THEROCK_DIR/install"
 
@@ -83,9 +123,8 @@ echo ""
 # -----------------------------------------------------------------------------
 # STEP 2 — Find latest tarball for this target
 # -----------------------------------------------------------------------------
-echo "[2/5] Querying S3 index for latest linux tarball matching '$GFX_TARGET'..."
+echo "[2/4] Querying S3 index for latest tarball matching '$GFX_TARGET'..."
 
-# Parse the embedded JSON from the index page, extract name+mtime, pick latest
 LATEST_TARBALL=$(curl -s "$BASE_URL/index.html" | \
     python3 -c "
 import sys, json, re
@@ -104,7 +143,6 @@ if not matches:
     print('NOT_FOUND')
     sys.exit(1)
 
-# Sort by mtime descending, pick the newest
 latest = sorted(matches, key=lambda f: f['mtime'], reverse=True)[0]
 print(latest['name'])
 ")
@@ -113,7 +151,6 @@ if [ "$LATEST_TARBALL" = "PARSE_ERROR" ]; then
     echo "  ERROR: Could not parse S3 index page."
     exit 1
 fi
-
 if [ "$LATEST_TARBALL" = "NOT_FOUND" ]; then
     echo "  ERROR: No tarball found for target '$GFX_TARGET'."
     exit 1
@@ -125,42 +162,63 @@ echo "  URL: $TARBALL_URL"
 echo ""
 
 # -----------------------------------------------------------------------------
-# STEP 3 — Download (skip if already present in SCRATCH_ROOT or prior install)
+# STEP 3 — Download
 # -----------------------------------------------------------------------------
-echo "[3/5] Preparing installation directory at $THEROCK_DIR ..."
+echo "[3/4] Preparing installation directory at $THEROCK_DIR ..."
 mkdir -p "$THEROCK_DIR"
 
 DEST="$THEROCK_DIR/$LATEST_TARBALL"
 
-# Check if tarball exists in SCRATCH_ROOT or any prior therock-tarball-* directory
+tarball_ok() {
+    gzip -t "$1" 2>/dev/null
+}
+
+# Reuse an existing valid tarball from a prior install to avoid re-downloading
 EXISTING_TARBALL=""
 if [ -f "$SCRATCH_ROOT/$LATEST_TARBALL" ]; then
     EXISTING_TARBALL="$SCRATCH_ROOT/$LATEST_TARBALL"
 else
-    # Search in prior therock-tarball-* directories
     EXISTING_TARBALL=$(find "$SCRATCH_ROOT" -maxdepth 2 -name "$LATEST_TARBALL" -type f 2>/dev/null | head -1 || true)
 fi
 
 if [ -n "$EXISTING_TARBALL" ] && [ -f "$EXISTING_TARBALL" ]; then
     FILESIZE=$(du -sh "$EXISTING_TARBALL" | cut -f1)
     echo "  Found existing tarball at $EXISTING_TARBALL ($FILESIZE)"
-    echo "  Copying to $DEST ..."
-    cp "$EXISTING_TARBALL" "$DEST"
-elif [ -f "$DEST" ]; then
-    FILESIZE=$(du -sh "$DEST" | cut -f1)
-    echo "  Tarball already present ($FILESIZE) — skipping download."
-else
-    echo "  Downloading (~$(curl -sI "$TARBALL_URL" | grep -i content-length | awk '{printf "%.1f GB", $2/1073741824}' || echo 'unknown size'))..."
-    echo "  Please wait..."
-    wget -c "$TARBALL_URL" -O "$DEST" --progress=dot:giga 2>&1
-    echo "  Download complete."
+    echo "  Verifying integrity..."
+    if tarball_ok "$EXISTING_TARBALL"; then
+        echo "  OK — copying to $DEST ..."
+        cp "$EXISTING_TARBALL" "$DEST"
+    else
+        echo "  WARNING: existing tarball is corrupted — downloading fresh copy."
+        EXISTING_TARBALL=""
+    fi
+fi
+
+if [ -z "$EXISTING_TARBALL" ]; then
+    if [ -f "$DEST" ]; then
+        FILESIZE=$(du -sh "$DEST" | cut -f1)
+        echo "  Tarball already at destination ($FILESIZE) — verifying integrity..."
+        if tarball_ok "$DEST"; then
+            echo "  OK — skipping download."
+        else
+            echo "  WARNING: destination tarball is corrupted — re-downloading."
+            rm -f "$DEST"
+        fi
+    fi
+
+    if [ ! -f "$DEST" ]; then
+        echo "  Downloading (~$(curl -sI "$TARBALL_URL" | grep -i content-length | awk '{printf "%.1f GB", $2/1073741824}' || echo 'unknown size'))..."
+        echo "  Please wait..."
+        wget -c "$TARBALL_URL" -O "$DEST" --progress=dot:giga 2>&1
+        echo "  Download complete."
+    fi
 fi
 echo ""
 
 # -----------------------------------------------------------------------------
 # STEP 4 — Extract
 # -----------------------------------------------------------------------------
-echo "[4/5] Extracting tarball to $INSTALL_DIR ..."
+echo "[4/4] Extracting tarball to $INSTALL_DIR ..."
 mkdir -p "$INSTALL_DIR"
 
 echo "  Running: tar -xf $DEST -C $INSTALL_DIR"
@@ -171,70 +229,24 @@ ls "$INSTALL_DIR" | sed 's/^/    /'
 echo ""
 
 # -----------------------------------------------------------------------------
-# STEP 5 — Verify installation
+# Save state for verify_therock.sh
 # -----------------------------------------------------------------------------
-echo "[5/5] Verifying installation..."
-echo ""
+cat > "$STATE_FILE" <<EOF
+INSTALL_DIR=$INSTALL_DIR
+GFX_TARGET=$GFX_TARGET
+LATEST_TARBALL=$LATEST_TARBALL
+EOF
 
-ERRORS=0
-
-# --- rocminfo ---
-ROCMINFO="$INSTALL_DIR/bin/rocminfo"
-if [ -f "$ROCMINFO" ]; then
-    echo "  ✔ Found: $ROCMINFO"
-    echo ""
-    echo "--- rocminfo (first 50 lines) ---"
-    "$ROCMINFO" 2>&1 | head -50 || true
-    echo ""
-else
-    echo "  ✘ rocminfo NOT found at $ROCMINFO"
-    ERRORS=$((ERRORS + 1))
-fi
-
-# --- test_hip_api ---
-HIP_TEST="$INSTALL_DIR/bin/test_hip_api"
-if [ -f "$HIP_TEST" ]; then
-    echo "  ✔ Found: $HIP_TEST"
-    echo ""
-    echo "--- test_hip_api ---"
-    "$HIP_TEST" 2>&1 | head -50 || true
-    echo ""
-else
-    echo "  ✘ test_hip_api NOT found at $HIP_TEST"
-    echo "    (may be in a different path — searching...)"
-    FOUND=$(find "$INSTALL_DIR" -name "test_hip_api" 2>/dev/null | head -3)
-    if [ -n "$FOUND" ]; then
-        echo "    Found at: $FOUND"
-        echo ""
-        echo "--- test_hip_api ---"
-        "$FOUND" 2>&1 | head -50 || true
-    else
-        ERRORS=$((ERRORS + 1))
-    fi
-    echo ""
-fi
-
-# -----------------------------------------------------------------------------
-# Summary
-# -----------------------------------------------------------------------------
 echo "============================================================"
-echo "  Installation Summary"
+echo "  Install Complete"
 echo "------------------------------------------------------------"
 echo "  GPU target  : $GFX_TARGET"
 echo "  Tarball     : $LATEST_TARBALL"
 echo "  Install dir : $INSTALL_DIR"
-echo "  Errors      : $ERRORS"
 echo ""
-echo "  Useful commands:"
-echo "    $INSTALL_DIR/bin/rocminfo"
-echo "    $INSTALL_DIR/bin/test_hip_api"
-echo "    $INSTALL_DIR/bin/hipcc --version"
+echo "  Run verification:"
+echo "    bash verify_therock.sh"
+echo "  Or run both together:"
+echo "    bash therock.sh"
 echo "============================================================"
-
-if [ "$ERRORS" -gt 0 ]; then
-    echo "  WARNING: $ERRORS verification step(s) failed."
-    exit 1
-fi
-
-echo "  All verification steps passed."
 echo ""
