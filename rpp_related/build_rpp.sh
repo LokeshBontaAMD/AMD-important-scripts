@@ -78,18 +78,27 @@ else
 fi
 
 # ─── RPP source resolution ────────────────────────────────────────────────────
-# Priority: RPP_SOURCE env var  >  $PWD/rpp  >  error
+# Priority: RPP_SOURCE env var  >  AMD-stack/rpp  >  interactive prompt
+AMD_STACK_DIR="$(readlink -f "${SCRIPT_DIR}/../../AMD-stack")"
 if [[ -n "${RPP_SOURCE:-}" ]]; then
     RPP_SRC="$(readlink -f "${RPP_SOURCE}")"
     info "RPP source (RPP_SOURCE) : ${RPP_SRC}"
-elif [[ -d "$(pwd)/rpp" ]]; then
-    RPP_SRC="$(pwd)/rpp"
-    info "RPP source (PWD)        : ${RPP_SRC}"
+elif [[ -d "${AMD_STACK_DIR}/rpp" ]]; then
+    RPP_SRC="${AMD_STACK_DIR}/rpp"
+    info "RPP source (AMD-stack)  : ${RPP_SRC}"
 else
-    error "RPP source directory not found."
-    error "  Looked in : $(pwd)/rpp"
-    error "  Fix:  export RPP_SOURCE=/path/to/rpp   then re-run build_rpp"
-    exit 1
+    warn "RPP not found in AMD-stack (${AMD_STACK_DIR}/rpp)."
+    read -r -p "  Enter path to RPP source directory: " _RPP_INPUT
+    if [[ -z "${_RPP_INPUT}" ]]; then
+        error "No path provided. Aborting."
+        exit 1
+    fi
+    RPP_SRC="$(readlink -f "${_RPP_INPUT}")"
+    if [[ ! -d "${RPP_SRC}" ]]; then
+        error "Directory does not exist: ${RPP_SRC}"
+        exit 1
+    fi
+    info "RPP source (user)       : ${RPP_SRC}"
 fi
 
 RPP_BUILD="${RPP_SRC}/build"
@@ -114,8 +123,8 @@ usage() {
 
   ${BLU}build_rpp${RST} - RPP build helper script
 
-  ${CYN}Build type (one required):${RST}
-    -r              Release build
+  ${CYN}Build type (default: -r):${RST}
+    -r              Release build  (default when no args given)
     -d              Debug build
     (-r and -d cannot be used together)
 
@@ -154,9 +163,8 @@ EOF
 
 # ─── Argument Parsing ─────────────────────────────────────────────────────────
 if [[ $# -eq 0 ]]; then
-    error "No arguments provided."
-    usage
-    exit 1
+    BUILD_TYPE="Release"
+    FLAG_R=true
 fi
 
 while [[ $# -gt 0 ]]; do
