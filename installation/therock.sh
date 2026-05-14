@@ -4,8 +4,8 @@
 # Full TheRock workflow: install (download + extract) then verify.
 #
 # Usage:
-#   bash therock.sh
-#   GFX_TARGET=gfx90a bash therock.sh   # skip GPU auto-detection
+#   therock
+#   GFX_TARGET=gfx90a therock   # skip GPU auto-detection
 # =============================================================================
 
 set -euo pipefail

@@ -4,15 +4,15 @@
 # Verifies a TheRock installation by running rocminfo and test_hip_api.
 #
 # Usage:
-#   bash verify_therock.sh                        # reads last install from state file
-#   bash verify_therock.sh /path/to/install/dir   # explicit install dir
-#   INSTALL_DIR=/path/to/install/dir bash verify_therock.sh
+#   verify_therock                                # reads last install from state file
+#   verify_therock /path/to/install/dir           # explicit install dir
+#   INSTALL_DIR=/path/to/install/dir verify_therock
 # =============================================================================
 
 set -euo pipefail
 
-SCRATCH_ROOT="${SCRATCH_ROOT:-/scratch/users/lbonta}"
-STATE_FILE="$SCRATCH_ROOT/.therock_last_install"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/scratch/users/${USER}}"
+STATE_FILE="${SCRATCH_ROOT}/.therock_last_install"
 
 # Resolve INSTALL_DIR: arg > env var > state file
 if [ -n "${1:-}" ]; then
@@ -24,13 +24,11 @@ elif [ -f "$STATE_FILE" ]; then
     source "$STATE_FILE"
 else
     echo "ERROR: No install directory specified."
-    echo "  Run install_therock.sh first, or provide the path:"
-    echo "    bash verify_therock.sh /path/to/install/dir"
+    echo "  Run install_therock first, or provide the path:"
+    echo "    verify_therock /path/to/install/dir"
     exit 1
 fi
 
-# GFX_TARGET and LATEST_TARBALL may have been loaded from the state file;
-# fall back to defaults if running standalone.
 GFX_TARGET="${GFX_TARGET:-unknown}"
 LATEST_TARBALL="${LATEST_TARBALL:-unknown}"
 
@@ -88,9 +86,6 @@ else
     echo ""
 fi
 
-# -----------------------------------------------------------------------------
-# Summary
-# -----------------------------------------------------------------------------
 echo "============================================================"
 echo "  Verification Summary"
 echo "------------------------------------------------------------"

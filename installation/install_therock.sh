@@ -8,24 +8,31 @@
 #   bash install_therock.sh
 #   GFX_TARGET=gfx90a bash install_therock.sh   # skip auto-detection
 #
+# Installs into:
+#   $SCRATCH_ROOT/therock-tarballs/therock-tarball-$GFX-$TIMESTAMP/
+#
 # On success writes install state to $SCRATCH_ROOT/.therock_last_install
-# so that verify_therock.sh can pick it up automatically.
+# so that verify_therock.sh / set_rocm_env.sh can pick it up automatically.
 # =============================================================================
 
 set -euo pipefail
 
-SCRATCH_ROOT="${SCRATCH_ROOT:-/scratch/users/lbonta}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-/scratch/users/${USER}}"
+TARBALLS_DIR="${SCRATCH_ROOT}/therock-tarballs"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 BASE_URL="https://therock-nightly-tarball.s3.amazonaws.com"
-STATE_FILE="$SCRATCH_ROOT/.therock_last_install"
+STATE_FILE="${SCRATCH_ROOT}/.therock_last_install"
 
 echo ""
 echo "============================================================"
 echo "  TheRock Nightly Tarball — Install"
 echo "  $(date)"
 echo "  Host: $(hostname)"
+echo "  Tarballs dir: ${TARBALLS_DIR}"
 echo "============================================================"
 echo ""
+
+mkdir -p "${TARBALLS_DIR}"
 
 # -----------------------------------------------------------------------------
 # STEP 1 — Detect GPU architecture
@@ -36,8 +43,6 @@ if [ -n "${GFX_TARGET:-}" ]; then
 else
     echo "[1/4] Detecting GPU architecture..."
 
-    # Primary: rocm-smi gives the GFX version directly and works even when the
-    # GPU doesn't appear under a VGA/Display PCI class (datacenter cards).
     detect_gfx_rocmsmi() {
         command -v rocm-smi &>/dev/null || return 1
         local gfx
@@ -57,8 +62,6 @@ else
         esac
     }
 
-    # Fallback: lspci product-name / device-ID matching.
-    # Scans for "AMD" broadly to catch cards under non-VGA PCI classes.
     PCI_INFO=$(lspci 2>/dev/null \
         | grep -i -E "VGA|3D|Display|Radeon|NVIDIA|Instinct|AMD|Advanced Micro" \
         | grep -v "Host bridge" \
@@ -69,7 +72,6 @@ else
     echo ""
 
     detect_gfx_lspci() {
-        # MI325X ships with device ID 0x74a5 (not 0x74b5).
         if echo "$PCI_INFO" | grep -qi "MI300X\|Device 74a0\|0x74a0"; then
             echo "gfx94X-dcgpu"
         elif echo "$PCI_INFO" | grep -qi "MI300A\|Device 74a1\|0x74a1"; then
@@ -114,8 +116,8 @@ fi
 echo "  GPU architecture: $GFX_TARGET"
 echo ""
 
-THEROCK_DIR="$SCRATCH_ROOT/therock-tarball-$GFX_TARGET-$TIMESTAMP"
-INSTALL_DIR="$THEROCK_DIR/install"
+THEROCK_DIR="${TARBALLS_DIR}/therock-tarball-${GFX_TARGET}-${TIMESTAMP}"
+INSTALL_DIR="${THEROCK_DIR}/install"
 
 echo "  Installation directory: $THEROCK_DIR"
 echo ""
@@ -175,11 +177,7 @@ tarball_ok() {
 
 # Reuse an existing valid tarball from a prior install to avoid re-downloading
 EXISTING_TARBALL=""
-if [ -f "$SCRATCH_ROOT/$LATEST_TARBALL" ]; then
-    EXISTING_TARBALL="$SCRATCH_ROOT/$LATEST_TARBALL"
-else
-    EXISTING_TARBALL=$(find "$SCRATCH_ROOT" -maxdepth 2 -name "$LATEST_TARBALL" -type f 2>/dev/null | head -1 || true)
-fi
+EXISTING_TARBALL=$(find "${TARBALLS_DIR}" -maxdepth 2 -name "$LATEST_TARBALL" -type f 2>/dev/null | head -1 || true)
 
 if [ -n "$EXISTING_TARBALL" ] && [ -f "$EXISTING_TARBALL" ]; then
     FILESIZE=$(du -sh "$EXISTING_TARBALL" | cut -f1)
@@ -229,7 +227,7 @@ ls "$INSTALL_DIR" | sed 's/^/    /'
 echo ""
 
 # -----------------------------------------------------------------------------
-# Save state for verify_therock.sh
+# Save state for verify_therock.sh / set_rocm_env.sh
 # -----------------------------------------------------------------------------
 cat > "$STATE_FILE" <<EOF
 INSTALL_DIR=$INSTALL_DIR
@@ -245,8 +243,8 @@ echo "  Tarball     : $LATEST_TARBALL"
 echo "  Install dir : $INSTALL_DIR"
 echo ""
 echo "  Run verification:"
-echo "    bash verify_therock.sh"
+echo "    verify_therock"
 echo "  Or run both together:"
-echo "    bash therock.sh"
+echo "    therock"
 echo "============================================================"
 echo ""

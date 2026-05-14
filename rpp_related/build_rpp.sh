@@ -648,9 +648,14 @@ success "CMake configuration complete."
 
 # ─── Build ────────────────────────────────────────────────────────────────────
 step "Building RPP  (-j ${JOBS})"
+BUILD_START=$(date +%s)
 cmake --build "${RPP_BUILD}" --parallel "${JOBS}"
+BUILD_END=$(date +%s)
+BUILD_ELAPSED=$(( BUILD_END - BUILD_START ))
+BUILD_MM=$(( BUILD_ELAPSED / 60 ))
+BUILD_SS=$(( BUILD_ELAPSED % 60 ))
 echo ""
-success "Build complete."
+success "Build complete.  (elapsed: ${BUILD_MM}m ${BUILD_SS}s)"
 
 # ─── Install ──────────────────────────────────────────────────────────────────
 if ${DO_INSTALL}; then
@@ -664,6 +669,7 @@ fi
 echo ""
 success "══════════════════════════════════════════════════"
 success "  All done!  Build type=${BUILD_TYPE}  Backend=${BACKEND}"
+success "  Build time : ${BUILD_MM}m ${BUILD_SS}s"
 if ${DO_INSTALL}; then
     success "  Installed to: ${INSTALL_PREFIX}"
 fi

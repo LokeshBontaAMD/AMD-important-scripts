@@ -8,7 +8,8 @@
 #
 #  Arguments:
 #    $1  (optional) Path to the TheRock install tree.
-#        Defaults to the gfx94X-dcgpu tarball under /scratch/users/lbonta.
+#        If omitted, reads the last install from $SCRATCH_ROOT/.therock_last_install
+#        (written automatically by install_therock.sh).
 #
 #  What it does:
 #    Exports all environment variables required for a ROCm/HIP build and
@@ -40,68 +41,64 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 fi
 
 # ─── Resolve install path ─────────────────────────────────────────────────────
-# Accept an explicit path via $1; fall back to the default TheRock tarball.
-_RAW_PATH="${1:-/scratch/users/lbonta/therock-tarball-gfx94X-dcgpu-20260513-145755/install}"
+# Priority: explicit $1 > $THEROCK_INSTALL_DIR env > .therock_last_install state file
+_SCRATCH_ROOT="${SCRATCH_ROOT:-/scratch/users/${USER}}"
+_STATE_FILE="${_SCRATCH_ROOT}/.therock_last_install"
+
+if [[ -n "${1:-}" ]]; then
+    _RAW_PATH="$1"
+elif [[ -n "${THEROCK_INSTALL_DIR:-}" ]]; then
+    _RAW_PATH="${THEROCK_INSTALL_DIR}"
+elif [[ -f "${_STATE_FILE}" ]]; then
+    # shellcheck source=/dev/null
+    source "${_STATE_FILE}"
+    _RAW_PATH="${INSTALL_DIR:-}"
+    if [[ -z "${_RAW_PATH}" ]]; then
+        echo "ERROR: State file ${_STATE_FILE} exists but contains no INSTALL_DIR."
+        return 1
+    fi
+else
+    echo "ERROR: No TheRock install path found."
+    echo "  Options:"
+    echo "    1. Run install_therock to download and extract a build."
+    echo "    2. Pass the path explicitly:"
+    echo "       source set_rocm_env.sh /path/to/therock/install"
+    echo "    3. Set THEROCK_INSTALL_DIR=/path/to/install and re-source."
+    return 1
+fi
 
 # Canonicalize to an absolute path so every variable is unambiguous.
 if command -v realpath &>/dev/null; then
     THEROCK_INSTALL_PATH="$(realpath "$_RAW_PATH")"
 else
-    # Fallback for systems without realpath (older RHEL/CentOS).
     THEROCK_INSTALL_PATH="$(cd "$_RAW_PATH" 2>/dev/null && pwd)"
 fi
-unset _RAW_PATH
+unset _RAW_PATH _STATE_FILE _SCRATCH_ROOT
 
-# Abort early if the directory does not exist — a bad path causes silent
-# build failures that are hard to debug later.
 if [[ ! -d "$THEROCK_INSTALL_PATH" ]]; then
     echo "ERROR: ROCm install directory does not exist: $THEROCK_INSTALL_PATH"
-    echo "       Pass a valid TheRock install path as the first argument."
+    echo "       Pass a valid TheRock install path as the first argument, or run install_therock."
     return 1
 fi
 
 # ─── Core ROCm variables ──────────────────────────────────────────────────────
 export ROCM_PATH="$THEROCK_INSTALL_PATH"
-
-# HIP_PLATFORM=amd selects the AMD GPU path inside hipcc / CMake.
-# The alternative ("nvidia") is only for CUDA cross-builds.
 export HIP_PLATFORM=amd
-
-# HIP_PATH mirrors ROCM_PATH because, in TheRock builds, HIP headers and
-# libs are installed directly under the ROCm root rather than a separate prefix.
 export HIP_PATH=$ROCM_PATH
 
 # ─── Compiler and toolchain paths ────────────────────────────────────────────
-# amdclang / amdclang++ / hipcc all live in $ROCM_PATH/bin.
-# LLVM utilities (llvm-symbolizer, etc.) live in llvm/bin.
 export HIP_CLANG_PATH=$ROCM_PATH/llvm/bin
 
 # ─── Header and library paths ─────────────────────────────────────────────────
-# Public HIP/ROCm headers (hip/hip_runtime.h, rocm_version.h, …).
 export HIP_INCLUDE_PATH=$ROCM_PATH/include
-
-# Shared libraries: libamdhip64.so, librocblas.so, etc.
 export HIP_LIB_PATH=$ROCM_PATH/lib
-
-# AMDGCN bitcode device libraries required by hipcc during device-code linking.
-# These contain built-ins like __ocml_* and OCKL math routines.
 export HIP_DEVICE_LIB_PATH=$ROCM_PATH/lib/llvm/amdgcn/bitcode
 
 # ─── Search-path variables ────────────────────────────────────────────────────
-# Prepend ROCm and LLVM bins so amdclang/hipcc are found before system clang.
 export PATH="$ROCM_PATH/bin:$HIP_CLANG_PATH:$PATH"
-
-# Runtime linker: include both lib and lib64 for mixed 32/64-bit installs,
-# and llvm/lib for LLVM runtime libraries (libLLVM, libclang, …).
 export LD_LIBRARY_PATH="$HIP_LIB_PATH:$ROCM_PATH/lib:$ROCM_PATH/lib64:$ROCM_PATH/llvm/lib:${LD_LIBRARY_PATH:-}"
-
-# Static linker search path (used by ld / lld at link time).
 export LIBRARY_PATH="$HIP_LIB_PATH:$ROCM_PATH/lib:$ROCM_PATH/lib64:${LIBRARY_PATH:-}"
-
-# C/C++ preprocessor header search path.
 export CPATH="$HIP_INCLUDE_PATH:${CPATH:-}"
-
-# pkg-config: lets CMake's find_package(hip) and similar modules locate .pc files.
 export PKG_CONFIG_PATH="$ROCM_PATH/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
