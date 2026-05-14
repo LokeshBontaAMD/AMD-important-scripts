@@ -54,7 +54,7 @@ step()    { echo -e "\n${MAG}═════════════════
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
 # ─── Source ROCm environment ──────────────────────────────────────────────────
-SET_ROCM_ENV="${SCRIPT_DIR}/set_rocm_env.sh"
+SET_ROCM_ENV="${SCRIPT_DIR}/../set_rocm_env/set_rocm_env.sh"
 if [[ -f "${SET_ROCM_ENV}" ]]; then
     # set_rocm_env.sh uses $1 as the therock install path.
     # We must clear positional params before sourcing so our CLI args
