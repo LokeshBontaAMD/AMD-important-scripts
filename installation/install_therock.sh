@@ -55,6 +55,7 @@ else
             gfx908)  echo "gfx908"       ;;
             gfx906)  echo "gfx906"       ;;
             gfx900)  echo "gfx900"       ;;
+            gfx120*) echo "gfx120X-all"  ;;
             gfx110*) echo "gfx110X-all"  ;;
             gfx103*) echo "gfx103X-all"  ;;
             gfx803)  echo "gfx803"       ;;
@@ -86,6 +87,8 @@ else
             echo "gfx906"
         elif echo "$PCI_INFO" | grep -qi "Vega10\|gfx900\|Instinct MI25\|Device 6860"; then
             echo "gfx900"
+        elif echo "$PCI_INFO" | grep -qi "RX 90\|RX 91\|Navi 4\|gfx1200\|gfx1201\|gfx120\|Device 7550\|Device 754\|Device 755"; then
+            echo "gfx120X-all"
         elif echo "$PCI_INFO" | grep -qi "RX 79\|RX 78\|RX 77\|RX 76\|Navi3\|gfx1100\|gfx1101\|gfx1102\|gfx110"; then
             echo "gfx110X-all"
         elif echo "$PCI_INFO" | grep -qi "RX 69\|RX 68\|RX 67\|RX 66\|Navi2\|gfx1030\|gfx1031\|gfx1032\|gfx103"; then
