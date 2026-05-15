@@ -42,14 +42,32 @@ fi
 
 # ─── Resolve install path ─────────────────────────────────────────────────────
 # Priority: explicit $1 > $THEROCK_INSTALL_DIR env > .therock_last_install state file
-_SCRATCH_ROOT="${SCRATCH_ROOT:-/scratch/users/${USER}}"
-_STATE_FILE="${_SCRATCH_ROOT}/.therock_last_install"
+# State file is searched in: $SCRATCH_ROOT, then a list of common fallback locations.
+
+_STATE_FILE=""
+if [[ -n "${SCRATCH_ROOT:-}" ]]; then
+    _candidates=("${SCRATCH_ROOT}")
+else
+    _candidates=(
+        "${HOME}/amd-workspace"
+        "${HOME}/workspace"
+        "/scratch/users/${USER}"
+        "${HOME}"
+    )
+fi
+for _candidate in "${_candidates[@]}"; do
+    if [[ -f "${_candidate}/.therock_last_install" ]]; then
+        _STATE_FILE="${_candidate}/.therock_last_install"
+        break
+    fi
+done
+unset _candidates _candidate
 
 if [[ -n "${1:-}" ]]; then
     _RAW_PATH="$1"
 elif [[ -n "${THEROCK_INSTALL_DIR:-}" ]]; then
     _RAW_PATH="${THEROCK_INSTALL_DIR}"
-elif [[ -f "${_STATE_FILE}" ]]; then
+elif [[ -n "${_STATE_FILE}" ]]; then
     # shellcheck source=/dev/null
     source "${_STATE_FILE}"
     _RAW_PATH="${INSTALL_DIR:-}"
@@ -64,6 +82,7 @@ else
     echo "    2. Pass the path explicitly:"
     echo "       source set_rocm_env.sh /path/to/therock/install"
     echo "    3. Set THEROCK_INSTALL_DIR=/path/to/install and re-source."
+    echo "    4. Set SCRATCH_ROOT to the directory containing .therock_last_install."
     return 1
 fi
 
